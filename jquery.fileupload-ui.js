@@ -186,7 +186,7 @@
             if (uploadRow) {
                 handler.progressbar = handler.initProgressBar(
                     uploadRow.find(handler.progressSelector),
-                    0
+                    ((xhr.upload || handler.serverProgressParam) ? 0 : 100)
                 );
                 uploadRow.find(handler.cancelSelector).click(function (e) {
                     handler.cancelUpload(e, files, index, xhr, handler);

@@ -77,6 +77,10 @@
                 requestHeaders: null,
                 multipart: true,
                 multiFileRequest: false,
+                serverProgressUri: null,
+                serverProgressParam : null,
+                serverProgressInterval: 500,
+                uniqueIds : {},
                 withCredentials: false,
                 forceIframeUpload: false,
                 maxChunkSize: null
@@ -90,6 +94,7 @@
             dropZoneListeners = {},
             protocolRegExp = /^http(s)?:\/\//,
             optionsReference,
+
 
             isXHRUploadCapable = function () {
                 return typeof XMLHttpRequest !== undef && typeof File !== undef && (
@@ -511,6 +516,25 @@
                 handleGlobalProgress(progressEvent, files, index, iframe, settings);
             },
 
+            startProgressChecking = function(file, settings) {
+                 setTimeout(function() { checkProgress(file, settings); }, settings.serverProgressInterval);
+             },
+
+            checkProgress = function (file, settings) {
+                if (settings.serverProgressUri) {
+                  var uri = settings.serverProgressUri + "?" + settings.serverProgressParam + "=" + settings.uniqueIds[file.val()];
+                  $.get(uri, function(data) {
+                    if (data && data.received && data.size) {
+                        var event = { loaded : data.received, total : data.size };
+                        settings.onProgress(event, [file], 0, null, settings);
+                    }
+                    if (data && data.received < data.size){
+                        setTimeout(function() { checkProgress(file, settings); }, settings.serverProgressInterval);
+                    }
+                  }, 'jsonp');
+                }
+            },
+
             legacyUploadFormDataInit = function (input, form, settings) {
                 var formData = getFormData(settings);
                 form.find(':input').not(':disabled')
@@ -564,15 +588,21 @@
                         // Fix for IE endless progress bar activity bug (happens on form submits to iframe targets):
                         $('<iframe src="javascript:false;" style="display:none"></iframe>').appendTo(form).remove();
                     });
+                var url = getUrl(settings);
+                if (settings.serverProgressParam) {
+                  url += "?" + settings.serverProgressParam + "=" + settings.uniqueIds[input.val()];
+                }
                 form
-                    .attr('action', getUrl(settings))
+                    .attr('action', url)
                     .attr('method', getMethod(settings))
                     .attr('target', iframe.attr('name'));
                 legacyUploadFormDataInit(input, form, settings);
+
                 if (typeof settings.onSend !== func || settings.onSend(event, files, 0, iframe, settings) !== false) {
                     multiLoader.push([files, 0, iframe, settings]);
                     iframe.readyState = 2;
                     form.get(0).submit();
+                    startProgressChecking(input,settings);
                 }
                 legacyUploadFormDataReset(input, form, settings);
                 form
@@ -582,10 +612,11 @@
             },
 
             handleLegacyUpload = function (event, input, form) {
+              settings.uniqueIds[input.val()] = (new Date()).getTime();
                 // javascript:false as iframe src prevents warning popups on HTTPS in IE6:
                 var iframe = $('<iframe src="javascript:false;" style="display:none" name="iframe_' +
-                    settings.namespace + '_' + (new Date()).getTime() + '"></iframe>'),
-                    uploadSettings = $.extend({}, settings),
+                settings.namespace + '_' + settings.uniqueIds[input.val()] + '"></iframe>'),
+                uploadSettings = $.extend({}, settings);
                     files = event.target.files;
                 files = files ? Array.prototype.slice.call(files, 0) : [{name: input.val(), type: null, size: null}];
                 uploadSettings.fileInput = input;
