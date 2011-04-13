@@ -1,5 +1,5 @@
 /*
- * jQuery File Upload Plugin 4.1
+ * jQuery File Upload Plugin 4.1.1
  * https://github.com/blueimp/jQuery-File-Upload
  *
  * Copyright 2010, Sebastian Tschan
@@ -10,7 +10,7 @@
  */
 
 /*jslint browser: true */
-/*global File, FileReader, FormData, ProgressEvent, unescape, jQuery, upload */
+/*global XMLHttpRequestUpload, File, FileReader, FormData, ProgressEvent, unescape, jQuery, upload */
 
 (function ($) {
 
@@ -115,10 +115,9 @@
 
 
             isXHRUploadCapable = function () {
-                return typeof XMLHttpRequest !== undef && typeof File !== undef && (
-                    !settings.multipart || typeof FormData !== undef ||
-                    (typeof FileReader !== undef && typeof XMLHttpRequest.prototype.sendAsBinary === func)
-                );
+                return typeof XMLHttpRequest !== undef && typeof XMLHttpRequestUpload !== undef &&
+                    typeof File !== undef && (!settings.multipart || typeof FormData !== undef ||
+                    (typeof FileReader !== undef && typeof XMLHttpRequest.prototype.sendAsBinary === func));
             },
 
             initEventHandlers = function () {
@@ -287,9 +286,11 @@
             },
             
             initUploadEventHandlers = function (files, index, xhr, settings) {
-                xhr.upload.onprogress = function (e) {
-                    handleProgressEvent(e, files, index, xhr, settings);
-                };
+                if (xhr.upload) {
+                    xhr.upload.onprogress = function (e) {
+                        handleProgressEvent(e, files, index, xhr, settings);
+                    };
+                }
                 xhr.onload = function (e) {
                     handleLoadEvent(e, files, index, xhr, settings);
                 };
@@ -488,7 +489,11 @@
                     initUploadEventHandlers(files, index, xhr, settings);
                     initUploadRequest(files, index, xhr, settings);
                     if (!settings.multipart) {
-                        xhr.send(blob);
+                        if (xhr.upload) {
+                            xhr.send(blob);
+                        } else {
+                            $.error('Browser does not support XHR file uploads');
+                        }
                     } else {
                         filesToUpload = (typeof index === num) ? [blob] : files;
                         if (typeof FormData !== undef) {
@@ -496,7 +501,7 @@
                         } else if (typeof FileReader !== undef && typeof xhr.sendAsBinary === func) {
                             fileReaderUpload(filesToUpload, xhr, settings);
                         } else {
-                            $.error('Browser does not support multipart XHR file uploads');
+                            $.error('Browser does not support multipart/form-data XHR file uploads');
                         }
                     }
                 };
@@ -673,7 +678,7 @@
                     if (typeof uploadSettings.initUpload === func) {
                         uploadSettings.initUpload(
                             event,
-                            [{name: input.val(), type: null, size: null}],
+                            files,
                             0,
                             iframe,
                             uploadSettings,
