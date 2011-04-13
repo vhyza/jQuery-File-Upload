@@ -1,5 +1,5 @@
 /*
- * jQuery File Upload Plugin 4.0
+ * jQuery File Upload Plugin 4.1
  * https://github.com/blueimp/jQuery-File-Upload
  *
  * Copyright 2010, Sebastian Tschan
@@ -45,6 +45,22 @@
             this.getList = function () {
                 return list;
             };
+        },
+        
+        SequenceHandler = function () {
+            var sequence = [];
+            this.push = function (callBack) {
+                sequence.push(callBack);
+                if (sequence.length === 1) {
+                    callBack();
+                }
+            };
+            this.next = function () {
+                sequence.shift();
+                if (sequence.length) {
+                    sequence[0]();
+                }
+            };
         };
         
     FileUpload = function (container) {
@@ -83,6 +99,7 @@
                 uniqueIds : {},
                 withCredentials: false,
                 forceIframeUpload: false,
+                sequentialUploads: false,
                 maxChunkSize: null
             },
             multiLoader = new MultiLoader(function (list) {
@@ -90,6 +107,7 @@
                     settings.onLoadAll(list);
                 }
             }),
+            sequenceHandler = new SequenceHandler(),
             documentListeners = {},
             dropZoneListeners = {},
             protocolRegExp = /^http(s)?:\/\//,
@@ -236,11 +254,11 @@
                                 xhr,
                                 settings,
                                 function () {
-                                    upload(event, files, index, xhr, settings);
+                                    upload(event, files, index, xhr, settings, true);
                                 }
                             );
                         } else {
-                            upload(event, files, index, xhr, settings);
+                            upload(event, files, index, xhr, settings, true);
                         }
                         return;
                     }
@@ -249,6 +267,8 @@
                 if (typeof settings.onLoad === func) {
                     settings.onLoad(event, files, index, xhr, settings);
                 }
+                multiLoader.complete();
+                sequenceHandler.next();
             },
             
             handleProgressEvent = function (event, files, index, xhr, settings) {
@@ -272,7 +292,6 @@
                 };
                 xhr.onload = function (e) {
                     handleLoadEvent(e, files, index, xhr, settings);
-                    multiLoader.complete();
                 };
                 xhr.onabort = function (e) {
                     settings.progressTotal = settings.progressLoaded;
@@ -280,6 +299,7 @@
                         settings.onAbort(e, files, index, xhr, settings);
                     }
                     multiLoader.complete();
+                    sequenceHandler.next();
                 };
                 xhr.onerror = function (e) {
                     settings.progressTotal = settings.progressLoaded;
@@ -287,6 +307,7 @@
                         settings.onError(e, files, index, xhr, settings);
                     }
                     multiLoader.complete();
+                    sequenceHandler.next();
                 };
             },
 
@@ -452,27 +473,37 @@
                 return file;
             },
 
-            upload = function (event, files, index, xhr, settings) {
-                var blob = getBlob(files[index], settings),
-                    filesToUpload;
-                initUploadEventHandlers(files, index, xhr, settings);
-                initUploadRequest(files, index, xhr, settings);
-                if (typeof settings.onSend === func && !settings.uploadedBytes &&
-                        settings.onSend(event, files, index, xhr, settings) === false) {
-                    return;
-                }
-                multiLoader.push(Array.prototype.slice.call(arguments, 1));
-                if (!settings.multipart) {
-                    xhr.send(blob);
-                } else {
-                    filesToUpload = (typeof index === num) ? [blob] : files;
-                    if (typeof FormData !== undef) {
-                        formDataUpload(filesToUpload, xhr, settings);
-                    } else if (typeof FileReader !== undef && typeof xhr.sendAsBinary === func) {
-                        fileReaderUpload(filesToUpload, xhr, settings);
-                    } else {
-                        $.error('Browser does not support multipart XHR file uploads');
+            upload = function (event, files, index, xhr, settings, nextChunk) {
+                var send;
+                if (!nextChunk) {
+                    if (typeof settings.onSend === func &&
+                            settings.onSend(event, files, index, xhr, settings) === false) {
+                        return;
                     }
+                    multiLoader.push(Array.prototype.slice.call(arguments, 1));
+                }
+                send = function () {
+                    var blob = getBlob(files[index], settings),
+                        filesToUpload;
+                    initUploadEventHandlers(files, index, xhr, settings);
+                    initUploadRequest(files, index, xhr, settings);
+                    if (!settings.multipart) {
+                        xhr.send(blob);
+                    } else {
+                        filesToUpload = (typeof index === num) ? [blob] : files;
+                        if (typeof FormData !== undef) {
+                            formDataUpload(filesToUpload, xhr, settings);
+                        } else if (typeof FileReader !== undef && typeof xhr.sendAsBinary === func) {
+                            fileReaderUpload(filesToUpload, xhr, settings);
+                        } else {
+                            $.error('Browser does not support multipart XHR file uploads');
+                        }
+                    }
+                };
+                if (!nextChunk && settings.sequentialUploads) {
+                    sequenceHandler.push(send);
+                } else {
+                    send();
                 }
             },
 
@@ -561,54 +592,66 @@
             },
 
             legacyUpload = function (event, files, input, form, iframe, settings) {
-                var originalAction = form.attr('action'),
-                    originalMethod = form.attr('method'),
-                    originalTarget = form.attr('target');
-                iframe
-                    .unbind('abort')
-                    .bind('abort', function (e) {
-                        iframe.readyState = 0;
-                        // javascript:false as iframe src prevents warning popups on HTTPS in IE6
-                        // concat is used here to prevent the "Script URL" JSLint error:
-                        iframe.unbind('load').attr('src', 'javascript'.concat(':false;'));
-                        handleLegacyGlobalProgress(e, files, 0, iframe, settings);
-                        if (typeof settings.onAbort === func) {
-                            settings.onAbort(e, files, 0, iframe, settings);
-                        }
-                        multiLoader.complete();
-                    })
-                    .unbind('load')
-                    .bind('load', function (e) {
-                        iframe.readyState = 4;
-                        handleLegacyGlobalProgress(e, files, 0, iframe, settings);
-                        if (typeof settings.onLoad === func) {
-                            settings.onLoad(e, files, 0, iframe, settings);
-                        }
-                        multiLoader.complete();
-                        // Fix for IE endless progress bar activity bug (happens on form submits to iframe targets):
-                        $('<iframe src="javascript:false;" style="display:none"></iframe>').appendTo(form).remove();
-                    });
-                var url = getUrl(settings);
-                if (settings.serverProgressParam) {
-                  url += "?" + settings.serverProgressParam + "=" + settings.uniqueIds[input.val()];
+                var send;
+                if (typeof settings.onSend === func && settings.onSend(event, files, 0, iframe, settings) === false) {
+                    return;
                 }
-                form
-                    .attr('action', url)
-                    .attr('method', getMethod(settings))
-                    .attr('target', iframe.attr('name'));
-                legacyUploadFormDataInit(input, form, settings);
-
-                if (typeof settings.onSend !== func || settings.onSend(event, files, 0, iframe, settings) !== false) {
-                    multiLoader.push([files, 0, iframe, settings]);
+                multiLoader.push([files, 0, iframe, settings]);
+                send = function () {
+                    var originalAction = form.attr('action'),
+                        originalMethod = form.attr('method'),
+                        originalTarget = form.attr('target');
+                    iframe
+                        .unbind('abort')
+                        .bind('abort', function (e) {
+                            iframe.readyState = 0;
+                            // javascript:false as iframe src prevents warning popups on HTTPS in IE6
+                            // concat is used here to prevent the "Script URL" JSLint error:
+                            iframe.unbind('load').attr('src', 'javascript'.concat(':false;'));
+                            handleLegacyGlobalProgress(e, files, 0, iframe, settings);
+                            if (typeof settings.onAbort === func) {
+                                settings.onAbort(e, files, 0, iframe, settings);
+                            }
+                            multiLoader.complete();
+                            sequenceHandler.next();
+                        })
+                        .unbind('load')
+                        .bind('load', function (e) {
+                            iframe.readyState = 4;
+                            handleLegacyGlobalProgress(e, files, 0, iframe, settings);
+                            if (typeof settings.onLoad === func) {
+                                settings.onLoad(e, files, 0, iframe, settings);
+                            }
+                            multiLoader.complete();
+                            sequenceHandler.next();
+                            // Fix for IE endless progress bar activity bug
+                            // (happens on form submits to iframe targets):
+                            $('<iframe src="javascript:false;" style="display:none"></iframe>')
+                                .appendTo(form).remove();
+                        });
+                        var url = getUrl(settings);
+                        if (settings.serverProgressParam) {
+                          url += "?" + settings.serverProgressParam + "=" + settings.uniqueIds[input.val()];
+                        }
+                    form
+                        .attr('action', url)
+                        .attr('method', getMethod(settings))
+                        .attr('target', iframe.attr('name'));
+                    legacyUploadFormDataInit(input, form, settings);
                     iframe.readyState = 2;
                     form.get(0).submit();
                     startProgressChecking(input,settings);
+                    legacyUploadFormDataReset(input, form, settings);
+                    form
+                        .attr('action', originalAction)
+                        .attr('method', originalMethod)
+                        .attr('target', originalTarget);
+                };
+                if (settings.sequentialUploads) {
+                    sequenceHandler.push(send);
+                } else {
+                    send();
                 }
-                legacyUploadFormDataReset(input, form, settings);
-                form
-                    .attr('action', originalAction)
-                    .attr('method', originalMethod)
-                    .attr('target', originalTarget);
             },
 
             handleLegacyUpload = function (event, input, form) {
