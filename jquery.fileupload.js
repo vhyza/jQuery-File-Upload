@@ -1,5 +1,5 @@
 /*
- * jQuery File Upload Plugin 4.3.1
+ * jQuery File Upload Plugin 4.4
  * https://github.com/blueimp/jQuery-File-Upload
  *
  * Copyright 2010, Sebastian Tschan
@@ -820,6 +820,9 @@
                 .addClass(settings.cssClass);
             settings.dropZone.not(container).addClass(settings.cssClass);
             initEventHandlers();
+            if (typeof settings.init === func) {
+                settings.init();
+            }
         };
 
         this.options = function (options) {
@@ -886,6 +889,9 @@
         };
         
         this.destroy = function () {
+            if (typeof settings.destroy === func) {
+                settings.destroy();
+            }
             removeEventHandlers();
             container
                 .removeData(settings.namespace)
