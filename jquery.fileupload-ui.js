@@ -221,7 +221,7 @@
         };
         
         this.initUploadProgress = function (xhr, handler) {
-            if (!xhr.upload && handler.progressbar) {
+            if (!xhr.upload && !handler.serverProgressParam && handler.progressbar) {
                 handler.progressbar.progressbar(
                     'value',
                     100 // indeterminate progress displayed by a full animated progress bar
